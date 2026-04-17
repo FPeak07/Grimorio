@@ -21,6 +21,7 @@ let linkingFrom = null;                    // para modo conectar
 let lastMouse = { x: 0, y: 0 };            // en coordenadas de pantalla
 let saveTimer = null;
 let activeBg = 'oscuro';
+let isLoading = false;
 
 const BACKGROUNDS = {
   oscuro:    { fill: '#0d0b08', grid: 'rgba(245,197,66,0.04)',   subtitle: '#e8dfc9', swatch: '#1c1a16' },
@@ -60,20 +61,110 @@ function screenToWorld(sx, sy) {
   };
 }
 
+// ===================== SPATIAL HASH =====================
+const SPATIAL_CELL = 200; // world units per cell
+const _spatial   = new Map(); // cellKey → Set<nodeId>
+const _nodeCells = new Map(); // nodeId  → Set<cellKey>
+
+function _cellKey(cx, cy) { return `${cx},${cy}`; }
+
+function _cellsForNode(node) {
+  const r = node.size;
+  const x0 = Math.floor((node.x - r) / SPATIAL_CELL);
+  const x1 = Math.floor((node.x + r) / SPATIAL_CELL);
+  const y0 = Math.floor((node.y - r) / SPATIAL_CELL);
+  const y1 = Math.floor((node.y + r) / SPATIAL_CELL);
+  const keys = [];
+  for (let cx = x0; cx <= x1; cx++)
+    for (let cy = y0; cy <= y1; cy++)
+      keys.push(_cellKey(cx, cy));
+  return keys;
+}
+
+function spatialAdd(node) {
+  const keys = _cellsForNode(node);
+  _nodeCells.set(node.id, new Set(keys));
+  for (const k of keys) {
+    if (!_spatial.has(k)) _spatial.set(k, new Set());
+    _spatial.get(k).add(node.id);
+  }
+}
+
+function spatialRemove(id) {
+  const keys = _nodeCells.get(id);
+  if (!keys) return;
+  for (const k of keys) _spatial.get(k)?.delete(id);
+  _nodeCells.delete(id);
+}
+
+function spatialUpdate(node) {
+  spatialRemove(node.id);
+  spatialAdd(node);
+}
+
+function buildSpatialHash() {
+  _spatial.clear();
+  _nodeCells.clear();
+  for (const node of tree.nodes) spatialAdd(node);
+}
+
 function findNodeAt(sx, sy) {
-  // Recorre en orden inverso (los últimos están "encima")
+  const { x: wx, y: wy } = screenToWorld(sx, sy);
+  const cx = Math.floor(wx / SPATIAL_CELL);
+  const cy = Math.floor(wy / SPATIAL_CELL);
+
+  // Collect candidates from 3×3 cell neighborhood
+  const candidates = new Set();
+  for (let dx = -1; dx <= 1; dx++)
+    for (let dy = -1; dy <= 1; dy++)
+      _spatial.get(_cellKey(cx + dx, cy + dy))?.forEach(id => candidates.add(id));
+
+  // Return topmost hit (highest tree.nodes index = rendered last = on top)
   for (let i = tree.nodes.length - 1; i >= 0; i--) {
     const n = tree.nodes[i];
+    if (!candidates.has(n.id)) continue;
     const p = worldToScreen(n.x, n.y);
     const r = n.size * view.scale;
-    const dx = sx - p.x, dy = sy - p.y;
-    if (Math.sqrt(dx * dx + dy * dy) <= r) return n;
+    const ddx = sx - p.x, ddy = sy - p.y;
+    if (ddx * ddx + ddy * ddy <= r * r) return n;
   }
   return null;
 }
 
 function getNode(id) {
   return tree.nodes.find(n => n.id === id);
+}
+
+// ===================== ADJACENCY LIST =====================
+// nodeId → Set of connected nodeIds (bidirectional)
+const _adj = new Map();
+
+function buildAdjacency() {
+  _adj.clear();
+  for (const n of tree.nodes) _adj.set(n.id, new Set());
+  for (const c of tree.connections) {
+    if (!_adj.has(c.from)) _adj.set(c.from, new Set());
+    if (!_adj.has(c.to))   _adj.set(c.to,   new Set());
+    _adj.get(c.from).add(c.to);
+    _adj.get(c.to).add(c.from);
+  }
+}
+
+function adjAdd(fromId, toId) {
+  if (!_adj.has(fromId)) _adj.set(fromId, new Set());
+  if (!_adj.has(toId))   _adj.set(toId,   new Set());
+  _adj.get(fromId).add(toId);
+  _adj.get(toId).add(fromId);
+}
+
+function adjRemove(id) {
+  const neighbors = _adj.get(id);
+  if (neighbors) neighbors.forEach(nid => _adj.get(nid)?.delete(id));
+  _adj.delete(id);
+}
+
+function getNeighbors(id) {
+  return Array.from(_adj.get(id) || []).map(getNode).filter(Boolean);
 }
 
 function isLinkNode(n) {
@@ -88,8 +179,80 @@ function toast(msg, duration = 2000) {
   el._t = setTimeout(() => el.classList.add('hidden'), duration);
 }
 
+// ===================== LOADING OVERLAY =====================
+const _loadingOverlay = document.getElementById('loading-overlay');
+const _loadingBar     = document.getElementById('loading-bar');
+const _loadingText    = document.getElementById('loading-text');
+
+function showLoader(total) {
+  isLoading = true;
+  _loadingBar.style.width = '0%';
+  _loadingText.textContent = `Cargando imágenes… 0 / ${total}`;
+  _loadingOverlay.classList.remove('hidden', 'fade-out');
+}
+
+function updateLoader(loaded, total) {
+  _loadingBar.style.width = `${Math.round((loaded / total) * 100)}%`;
+  _loadingText.textContent = `Cargando imágenes… ${loaded} / ${total}`;
+}
+
+function hideLoader() {
+  isLoading = false;
+  _loadingOverlay.classList.add('fade-out');
+  setTimeout(() => _loadingOverlay.classList.add('hidden'), 520);
+}
+
+async function preloadAllImages(nodes) {
+  const toLoad = nodes.filter(n => n.iconImage);
+  if (toLoad.length === 0) return;
+
+  showLoader(toLoad.length);
+  let loaded = 0;
+
+  await Promise.all(toLoad.map(node => new Promise(resolve => {
+    const src = node.iconImage.startsWith('data:')
+      ? node.iconImage
+      : `/images/${node.iconImage}`;
+    const img = new Image();
+    img._src = src;
+    img.onload = img.onerror = () => {
+      _imgCache.set(node.id, img);
+      updateLoader(++loaded, toLoad.length);
+      resolve();
+    };
+    img.src = src;
+  })));
+}
+
 // ===================== IMAGE CACHE =====================
 const _imgCache = new Map(); // nodeId → HTMLImageElement
+
+// ===================== COLOR CACHE =====================
+const _colorCache = new Map(); // hex string → {light30, dark40, dark50, rgb}
+
+function getColorVariants(color) {
+  if (_colorCache.has(color)) return _colorCache.get(color);
+  const rgb = parseHex(color);
+  const v = {
+    light30: lighten(color, 0.3),
+    dark40:  darken(color, 0.4),
+    dark50:  darken(color, 0.5),
+    rgb,
+  };
+  _colorCache.set(color, v);
+  return v;
+}
+
+// ===================== FONT CACHE =====================
+const _fontCache = new Map(); // key → font string
+
+function getFont(size, bold, family) {
+  const key = `${bold ? 'b' : ''}${size}${family}`;
+  if (_fontCache.has(key)) return _fontCache.get(key);
+  const f = `${bold ? 'bold ' : ''}${size}px '${family}', serif`;
+  _fontCache.set(key, f);
+  return f;
+}
 
 function _ensureImage(node) {
   if (!node.iconImage) { _imgCache.delete(node.id); return; }
@@ -151,7 +314,16 @@ function resizeCanvas() {
 window.addEventListener('resize', resizeCanvas);
 
 // ===================== RENDER =====================
+let _rafPending = false;
+
 function render() {
+  if (_rafPending) return;
+  _rafPending = true;
+  requestAnimationFrame(_renderFrame);
+}
+
+function _renderFrame() {
+  _rafPending = false;
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
   drawBackgroundGrid();
@@ -258,24 +430,29 @@ function drawNodes() {
     const isHover = hoveredId === n.id;
     const isSelected = selectedId === n.id;
     const color = n.color || '#f5c542';
+    const cv = getColorVariants(color);
 
-    // Glow
-    ctx.shadowColor = color;
-    ctx.shadowBlur = isHover || isSelected ? 25 : 12;
+    // Glow — skip shadow for sub-pixel nodes (invisible + expensive)
+    const useShadow = r >= 8;
+    if (useShadow) {
+      ctx.shadowColor = color;
+      ctx.shadowBlur = isHover || isSelected ? 25 : 12;
+    }
 
     // Relleno con gradiente radial
     const grad = ctx.createRadialGradient(p.x, p.y - r * 0.3, 0, p.x, p.y, r);
-    grad.addColorStop(0, lighten(color, 0.3));
+    grad.addColorStop(0, cv.light30);
     grad.addColorStop(0.6, color);
-    grad.addColorStop(1, darken(color, 0.4));
+    grad.addColorStop(1, cv.dark40);
     ctx.fillStyle = grad;
     drawShape(p.x, p.y, r, n.type);
     ctx.fill();
 
+    // Reset shadow before stroke so stroke doesn't re-trigger shadow pass
     ctx.shadowBlur = 0;
 
     // Borde
-    ctx.strokeStyle = (isHover || isSelected) ? '#fff8e0' : (n.borderColor || darken(color, 0.5));
+    ctx.strokeStyle = (isHover || isSelected) ? '#fff8e0' : (n.borderColor || cv.dark50);
     ctx.lineWidth = (isHover || isSelected) ? Math.max(2.5, n.borderWidth || 1.5) : (n.borderWidth || 1.5);
     drawShape(p.x, p.y, r, n.type);
     ctx.stroke();
@@ -303,7 +480,7 @@ function drawNodes() {
         ctx.drawImage(img, p.x - sw / 2, p.y - sh / 2, sw, sh);
         const fade = (n.iconFade || 0) / 100;
         if (fade > 0) {
-          const [rc, gc, bc] = parseHex(color);
+          const [rc, gc, bc] = cv.rgb;
           if (fade >= 1) {
             ctx.fillStyle = color;
           } else {
@@ -322,7 +499,7 @@ function drawNodes() {
     } else if (n.title) {
       ctx.fillStyle = n.titleColor || '#000000';
       const titleFont = n.titleFont || 'Cormorant Garamond';
-      ctx.font = `${Math.floor(r * 0.32)}px '${titleFont}', serif`;
+      ctx.font = getFont(Math.floor(r * 0.32), false, titleFont);
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText(n.title, p.x, p.y + r * 0.05, Math.floor(r * 1.8));
@@ -345,7 +522,7 @@ function drawNodes() {
       ctx.fillStyle = (BACKGROUNDS[activeBg] || BACKGROUNDS.oscuro).subtitle;
       const iconFont = n.iconFont || 'Cinzel';
       const iconSize = n.iconSize || 13;
-      ctx.font = `${n.iconBold ? 'bold ' : ''}${Math.max(iconSize, Math.floor(iconSize * Math.min(view.scale, 1.2)))}px '${iconFont}', serif`;
+      ctx.font = getFont(Math.max(iconSize, Math.floor(iconSize * Math.min(view.scale, 1.2))), n.iconBold, iconFont);
       ctx.textAlign = 'center';
       ctx.textBaseline = 'top';
       ctx.shadowColor = 'rgba(0,0,0,0.9)';
@@ -355,6 +532,17 @@ function drawNodes() {
     }
   }
 }
+
+// Pre-computed unit points for trig-heavy shapes (cos/sin at draw time eliminated)
+const _HEX_PTS = Array.from({length: 6}, (_, i) => {
+  const a = (Math.PI / 3) * i - Math.PI / 6;
+  return [Math.cos(a), Math.sin(a)];
+});
+const _STAR_PTS = Array.from({length: 10}, (_, i) => {
+  const a = (Math.PI / 5) * i - Math.PI / 2;
+  const ri = i % 2 === 0 ? 1 : 0.42;
+  return [ri * Math.cos(a), ri * Math.sin(a)];
+});
 
 function drawShape(x, y, r, type) {
   ctx.beginPath();
@@ -376,19 +564,12 @@ function drawShape(x, y, r, type) {
     ctx.lineTo(x - r, y);
     ctx.closePath();
   } else if (type === 'hexagon') {
-    for (let i = 0; i < 6; i++) {
-      const a = (Math.PI / 3) * i - Math.PI / 6;
-      i === 0 ? ctx.moveTo(x + r * Math.cos(a), y + r * Math.sin(a))
-              : ctx.lineTo(x + r * Math.cos(a), y + r * Math.sin(a));
-    }
+    ctx.moveTo(x + r * _HEX_PTS[0][0], y + r * _HEX_PTS[0][1]);
+    for (let i = 1; i < 6; i++) ctx.lineTo(x + r * _HEX_PTS[i][0], y + r * _HEX_PTS[i][1]);
     ctx.closePath();
   } else if (type === 'star') {
-    for (let i = 0; i < 10; i++) {
-      const a = (Math.PI / 5) * i - Math.PI / 2;
-      const ri = i % 2 === 0 ? r : r * 0.42;
-      i === 0 ? ctx.moveTo(x + ri * Math.cos(a), y + ri * Math.sin(a))
-              : ctx.lineTo(x + ri * Math.cos(a), y + ri * Math.sin(a));
-    }
+    ctx.moveTo(x + r * _STAR_PTS[0][0], y + r * _STAR_PTS[0][1]);
+    for (let i = 1; i < 10; i++) ctx.lineTo(x + r * _STAR_PTS[i][0], y + r * _STAR_PTS[i][1]);
     ctx.closePath();
   } else {
     ctx.arc(x, y, r, 0, Math.PI * 2);
@@ -426,6 +607,7 @@ function parseHex(hex) {
 
 // ===================== INTERACCIÓN =====================
 canvas.addEventListener('mousedown', (e) => {
+  if (isLoading) return;
   if (e.button === 2) return; // click derecho se maneja en contextmenu
   const node = findNodeAt(e.clientX, e.clientY);
 
@@ -451,6 +633,7 @@ canvas.addEventListener('mousedown', (e) => {
 });
 
 canvas.addEventListener('mousemove', (e) => {
+  if (isLoading) return;
   lastMouse.x = e.clientX;
   lastMouse.y = e.clientY;
 
@@ -464,6 +647,7 @@ canvas.addEventListener('mousemove', (e) => {
         const dy = e.movementY / view.scale;
         node.x += dx;
         node.y += dy;
+        spatialUpdate(node);
         draggingNode.moved = true;
         scheduleSave();
         render();
@@ -506,11 +690,13 @@ canvas.addEventListener('mouseup', (e) => {
 });
 
 canvas.addEventListener('dblclick', (e) => {
+  if (isLoading) return;
   const node = findNodeAt(e.clientX, e.clientY);
   if (node) openEditPanel(node.id);
 });
 
 canvas.addEventListener('wheel', (e) => {
+  if (isLoading) return;
   e.preventDefault();
   const factor = e.deltaY < 0 ? 1.1 : 0.9;
   const newScale = Math.min(3, Math.max(0.2, view.scale * factor));
@@ -527,6 +713,7 @@ canvas.addEventListener('wheel', (e) => {
 }, { passive: false });
 
 canvas.addEventListener('contextmenu', (e) => {
+  if (isLoading) return;
   e.preventDefault();
   const node = findNodeAt(e.clientX, e.clientY);
   if (node) {
@@ -604,13 +791,7 @@ document.getElementById('context-menu').addEventListener('click', (e) => {
 
 // ===================== ACCIONES =====================
 function addConnectedNode(parent, type) {
-  // Posiciona el nuevo nodo en una dirección alejada del padre,
-  // buscando un ángulo libre para no solapar con hijos existentes.
-  const children = tree.connections
-    .filter(c => c.from === parent.id || c.to === parent.id)
-    .map(c => getNode(c.from === parent.id ? c.to : c.from))
-    .filter(Boolean);
-
+  const children = getNeighbors(parent.id);
   const usedAngles = children.map(ch => Math.atan2(ch.y - parent.y, ch.x - parent.x));
   const angle = findFreeAngle(usedAngles);
   const distance = parent.size + 120;
@@ -630,6 +811,9 @@ function addConnectedNode(parent, type) {
 
   tree.nodes.push(newNode);
   tree.connections.push({ from: parent.id, to: newNode.id });
+  adjAdd(parent.id, newNode.id);
+  _adj.set(newNode.id, new Set([parent.id]));
+  spatialAdd(newNode);
   selectedId = newNode.id;
   scheduleSave();
   render();
@@ -637,11 +821,7 @@ function addConnectedNode(parent, type) {
 }
 
 function addLinkNode(parent) {
-  const children = tree.connections
-    .filter(c => c.from === parent.id || c.to === parent.id)
-    .map(c => getNode(c.from === parent.id ? c.to : c.from))
-    .filter(Boolean);
-
+  const children = getNeighbors(parent.id);
   const usedAngles = children.map(ch => Math.atan2(ch.y - parent.y, ch.x - parent.x));
   const angle = findFreeAngle(usedAngles);
   const distance = parent.size + 120;
@@ -661,6 +841,9 @@ function addLinkNode(parent) {
 
   tree.nodes.push(newNode);
   tree.connections.push({ from: parent.id, to: newNode.id });
+  adjAdd(parent.id, newNode.id);
+  _adj.set(newNode.id, new Set([parent.id]));
+  spatialAdd(newNode);
   selectedId = newNode.id;
   scheduleSave();
   render();
@@ -696,6 +879,7 @@ function createConnection(fromId, toId) {
     return;
   }
   tree.connections.push({ from: fromId, to: toId });
+  adjAdd(fromId, toId);
   scheduleSave();
   render();
 }
@@ -705,6 +889,8 @@ function deleteNode(id) {
   if (!confirm(`¿Eliminar "${getNode(id).title}" y sus conexiones?`)) return;
   tree.nodes = tree.nodes.filter(n => n.id !== id);
   tree.connections = tree.connections.filter(c => c.from !== id && c.to !== id);
+  adjRemove(id);
+  spatialRemove(id);
   if (selectedId === id) selectedId = null;
   scheduleSave();
   render();
@@ -1066,13 +1252,19 @@ async function loadFromServer() {
   try {
     const r = await fetch('/api/tree');
     tree = await r.json();
+    buildAdjacency();
+    buildSpatialHash();
     document.getElementById('tree-title').textContent = tree.title || 'Grimorio';
     if (tree.background && BACKGROUNDS[tree.background]) {
       activeBg = tree.background;
     }
+    await preloadAllImages(tree.nodes || []);
+    hideLoader();
     render();
   } catch (e) {
     console.error('Error cargando:', e);
+    isLoading = false;
+    _loadingOverlay.classList.add('hidden');
     toast('Error al cargar el árbol');
   }
 }
@@ -1163,6 +1355,10 @@ document.getElementById('import-file').addEventListener('change', async (e) => {
     if (!imported.nodes || !imported.connections) throw new Error('Formato inválido');
     if (!confirm('Esto reemplazará tu árbol actual. ¿Continuar?')) return;
     tree = imported;
+    buildAdjacency();
+    buildSpatialHash();
+    await preloadAllImages(tree.nodes || []);
+    hideLoader();
     await saveToServer();
     render();
     toast('Importado correctamente');
