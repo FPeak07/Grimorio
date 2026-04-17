@@ -1,0 +1,31 @@
+# Datos personales del usuario
+tree_data.json
+images/*
+!images/.gitkeep
+
+# Build
+dist/
+build/
+logo.icns
+_logo_trimmed.png
+logo.iconset/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.venv/
+venv/
+env/
+
+# macOS
+.DS_Store
+.AppleDouble
+
+# IDE / herramientas locales
+.claude/
+.env
+
+# Archivos obsoletos
+Logo.jpg

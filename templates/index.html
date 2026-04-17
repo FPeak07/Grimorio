@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Árbol de Conocimiento</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;800&family=Cormorant+Garamond:ital,wght@0,400;0,500;1,400&family=JetBrains+Mono:wght@400;500&family=Playfair+Display:ital,wght@0,400;0,700;1,400&family=Bebas+Neue&family=Merriweather:ital,wght@0,400;0,700;1,400&family=Oswald:wght@400;600&family=Dancing+Script:wght@400;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<!-- Fondo con textura -->
+<div class="vignette"></div>
+<div class="grain"></div>
+
+<!-- Barra superior -->
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-mark">✦</span>
+    <h1 id="tree-title" contenteditable="true" spellcheck="false">Grimorio</h1>
+  </div>
+  <div class="topbar-actions">
+    <button id="btn-help" class="icon-btn" title="Ayuda">?</button>
+    <button id="btn-save" class="icon-btn" title="Guardar">💾</button>
+    <button id="btn-center" class="icon-btn" title="Centrar vista">◎</button>
+    <button id="btn-export" class="icon-btn" title="Exportar JSON">↓</button>
+    <button id="btn-export-html" class="icon-btn" title="Exportar HTML compartible">📄</button>
+    <label for="import-file" class="icon-btn" title="Importar JSON">↑</label>
+    <input type="file" id="import-file" accept=".json" hidden>
+  </div>
+</header>
+
+<!-- Canvas principal -->
+<canvas id="tree-canvas"></canvas>
+
+<!-- Indicador de zoom -->
+<div class="zoom-indicator">
+  <span id="zoom-level">100%</span>
+</div>
+
+<!-- Menú contextual (click derecho) -->
+<div id="context-menu" class="context-menu hidden">
+  <div class="ctx-title">Nodo: <span id="ctx-title-name"></span></div>
+  <button data-action="add-circle">⬤  Añadir círculo conectado</button>
+  <button data-action="add-square">■  Añadir cuadrado conectado</button>
+  <button data-action="add-triangle">▲  Añadir triángulo conectado</button>
+  <button data-action="add-link">🔗  Añadir nodo enlace</button>
+  <hr>
+  <button data-action="edit">✎  Editar nodo</button>
+  <button data-action="connect">⤳  Conectar con otro nodo</button>
+  <button data-action="delete" class="danger">✕  Eliminar nodo</button>
+</div>
+
+<!-- Panel lateral de edición -->
+<aside id="edit-panel" class="edit-panel hidden">
+  <div class="panel-header">
+    <h2>Editar nodo</h2>
+    <button id="panel-close" class="icon-btn">✕</button>
+  </div>
+
+  <div class="panel-body">
+    <label>Título
+      <input type="text" id="edit-title" placeholder="Nombre del nodo">
+    </label>
+
+    <label id="link-url-field">URL del enlace
+      <div class="icon-input-row">
+        <input type="url" id="edit-url" placeholder="https://...">
+        <span class="url-link-icon">🔗</span>
+      </div>
+    </label>
+
+    <label>Subtítulo
+      <div class="icon-input-row">
+        <input type="text" id="edit-icon" placeholder="Texto debajo del nodo" maxlength="15">
+        <label class="icon-bold-label" title="Negrita">
+          <input type="checkbox" id="edit-icon-bold">
+          <span>N</span>
+        </label>
+      </div>
+    </label>
+
+    <div class="panel-field">
+      <span class="field-title">Subtítulo — estilo</span>
+      <div class="border-controls-row">
+        <label class="inline-label">Fuente
+          <select id="edit-icon-font">
+            <option value="Cinzel">Cinzel (defecto)</option>
+            <option value="Cormorant Garamond">Cormorant</option>
+            <option value="JetBrains Mono">JetBrains Mono</option>
+            <option value="Playfair Display">Playfair Display</option>
+            <option value="Bebas Neue">Bebas Neue</option>
+            <option value="Merriweather">Merriweather</option>
+            <option value="Oswald">Oswald</option>
+            <option value="Dancing Script">Dancing Script</option>
+          </select>
+        </label>
+        <label class="inline-label">Tamaño
+          <input type="range" id="edit-icon-size" min="8" max="40" value="13" step="1">
+          <span id="icon-size-display">13</span>
+        </label>
+      </div>
+    </div>
+
+    <div class="panel-field">
+      <span class="field-title">Imagen</span>
+      <div id="section-image">
+        <div class="image-upload-area">
+          <input type="file" id="icon-file" accept=".jpg,.jpeg,.png,.ico,image/jpeg,image/png,image/x-icon">
+          <label for="icon-file" class="image-upload-btn">Cargar imagen</label>
+          <div id="icon-preview" class="icon-preview-thumb"></div>
+          <button type="button" id="btn-delete-image" class="delete-image-btn" title="Eliminar imagen">✕</button>
+        </div>
+        <div class="size-slider-wrap">
+          <span class="fade-label">Fusión imagen / color</span>
+          <input type="range" id="icon-fade" min="0" max="100" value="0" step="1">
+          <div class="size-slider-labels">
+            <span>imagen</span>
+            <span id="icon-fade-display">0</span>
+            <span>color</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="row">
+      <label>Forma
+        <select id="edit-type">
+          <option value="circle">Círculo</option>
+          <option value="square">Cuadrado</option>
+          <option value="triangle">Triángulo</option>
+          <option value="diamond">Rombo</option>
+          <option value="hexagon">Hexágono</option>
+          <option value="star">Estrella</option>
+        </select>
+      </label>
+    </div>
+
+    <label>Tamaño
+      <div class="size-slider-wrap">
+        <input type="range" id="edit-size" min="1" max="1000" value="50" step="1">
+        <div class="size-slider-labels">
+          <span>−</span>
+          <span id="size-value-display">50</span>
+          <span>+</span>
+        </div>
+      </div>
+    </label>
+
+    <div class="panel-field">
+      <span class="field-title">Borde</span>
+      <div class="border-controls-row">
+        <label class="inline-label">Color
+          <input type="text" id="edit-border-color" class="color-hex-input" placeholder="#ffffff" maxlength="7">
+        </label>
+        <label class="inline-label">Grosor
+          <input type="range" id="edit-border-width" min="0" max="12" value="1" step="0.5">
+          <span id="border-width-display">1</span>
+        </label>
+      </div>
+    </div>
+
+    <div class="panel-field">
+      <span class="field-title">Texto del título</span>
+      <div class="border-controls-row">
+        <label class="inline-label">Color
+          <input type="text" id="edit-title-color" class="color-hex-input" placeholder="#000000" maxlength="7">
+        </label>
+        <label class="inline-label">Fuente
+          <select id="edit-title-font">
+            <option value="Cormorant Garamond">Cormorant (defecto)</option>
+            <option value="Cinzel">Cinzel</option>
+            <option value="JetBrains Mono">JetBrains Mono</option>
+            <option value="Playfair Display">Playfair Display</option>
+            <option value="Bebas Neue">Bebas Neue</option>
+            <option value="Merriweather">Merriweather</option>
+            <option value="Oswald">Oswald</option>
+            <option value="Dancing Script">Dancing Script</option>
+          </select>
+        </label>
+      </div>
+    </div>
+
+    <label>Color
+      <div class="color-picker">
+        <div class="color-wheel-wrap">
+          <canvas id="color-wheel" width="180" height="180"></canvas>
+          <div id="color-cursor" class="color-cursor"></div>
+        </div>
+        <div class="color-lightness-wrap">
+          <input type="range" id="color-lightness" min="5" max="95" value="50">
+        </div>
+        <div class="color-preview-row">
+          <div id="color-swatch" class="color-swatch"></div>
+          <input type="text" id="color-hex" class="color-hex-input" placeholder="#f5c542" maxlength="7">
+        </div>
+      </div>
+    </label>
+
+    <div id="content-field">
+    <div id="content-images-section" style="margin-bottom:.6em">
+      <input type="file" id="content-img-file" accept="image/*" multiple hidden>
+      <label for="content-img-file" class="image-upload-btn" style="display:inline-block;margin-bottom:.5em;cursor:pointer">＋ Imagen al contenido</label>
+      <div id="content-img-thumbs" style="display:flex;flex-wrap:wrap;gap:.4em;margin-top:.3em"></div>
+    </div>
+    <label>Información / Contenido (soporta Markdown)
+      <textarea id="edit-content" rows="12" placeholder="Escribe aquí todo lo que sabes sobre este tema...
+
+# Puedes usar títulos
+**negrita**, *cursiva*
+- listas
+- con viñetas
+
+`código inline` o bloques:
+```
+código
+```"></textarea>
+    </label>
+    </div>
+
+  </div>
+</aside>
+
+<!-- Panel de ayuda -->
+<div id="help-modal" class="modal hidden">
+  <div class="modal-content">
+    <button class="modal-close">✕</button>
+    <h2>Cómo usar el Grimorio</h2>
+    <ul>
+      <li><b>Mover vista:</b> arrastra con el botón izquierdo sobre el fondo.</li>
+      <li><b>Zoom:</b> rueda del ratón.</li>
+      <li><b>Crear nodo:</b> clic derecho sobre un nodo existente → elige forma.</li>
+      <li><b>Mover nodo:</b> arrastra un nodo con el botón izquierdo.</li>
+      <li><b>Editar nodo:</b> doble clic sobre él, o clic derecho → Editar.</li>
+      <li><b>Conectar nodos:</b> clic derecho → Conectar, luego clic en otro nodo.</li>
+      <li><b>Eliminar:</b> clic derecho → Eliminar (el raíz no se puede borrar).</li>
+      <li><b>Guardar:</b> automático. También con el botón 💾.</li>
+      <li><b>Exportar / Importar:</b> usa ↓ y ↑ en la barra superior para respaldos.</li>
+    </ul>
+    <p class="hint">Los datos se guardan en <code>tree_data.json</code> junto a <code>app.py</code>.</p>
+  </div>
+</div>
+
+<!-- Selector de fondo -->
+<button id="btn-bg" class="icon-btn bg-toggle-btn" title="Fondo del canvas">◫</button>
+<div id="bg-panel" class="bg-panel hidden">
+  <div class="bg-panel-title">Fondo</div>
+  <div class="bg-swatches" id="bg-swatches"></div>
+</div>
+
+<!-- Toast de notificación -->
+<div id="toast" class="toast hidden"></div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
