@@ -384,6 +384,17 @@ function drawNodes() {
   }
 }
 
+// Pre-computed unit points for trig-heavy shapes (cos/sin at draw time eliminated)
+const _HEX_PTS = Array.from({length: 6}, (_, i) => {
+  const a = (Math.PI / 3) * i - Math.PI / 6;
+  return [Math.cos(a), Math.sin(a)];
+});
+const _STAR_PTS = Array.from({length: 10}, (_, i) => {
+  const a = (Math.PI / 5) * i - Math.PI / 2;
+  const ri = i % 2 === 0 ? 1 : 0.42;
+  return [ri * Math.cos(a), ri * Math.sin(a)];
+});
+
 function drawShape(x, y, r, type) {
   ctx.beginPath();
   if (type === 'circle') {
@@ -404,19 +415,12 @@ function drawShape(x, y, r, type) {
     ctx.lineTo(x - r, y);
     ctx.closePath();
   } else if (type === 'hexagon') {
-    for (let i = 0; i < 6; i++) {
-      const a = (Math.PI / 3) * i - Math.PI / 6;
-      i === 0 ? ctx.moveTo(x + r * Math.cos(a), y + r * Math.sin(a))
-              : ctx.lineTo(x + r * Math.cos(a), y + r * Math.sin(a));
-    }
+    ctx.moveTo(x + r * _HEX_PTS[0][0], y + r * _HEX_PTS[0][1]);
+    for (let i = 1; i < 6; i++) ctx.lineTo(x + r * _HEX_PTS[i][0], y + r * _HEX_PTS[i][1]);
     ctx.closePath();
   } else if (type === 'star') {
-    for (let i = 0; i < 10; i++) {
-      const a = (Math.PI / 5) * i - Math.PI / 2;
-      const ri = i % 2 === 0 ? r : r * 0.42;
-      i === 0 ? ctx.moveTo(x + ri * Math.cos(a), y + ri * Math.sin(a))
-              : ctx.lineTo(x + ri * Math.cos(a), y + ri * Math.sin(a));
-    }
+    ctx.moveTo(x + r * _STAR_PTS[0][0], y + r * _STAR_PTS[0][1]);
+    for (let i = 1; i < 10; i++) ctx.lineTo(x + r * _STAR_PTS[i][0], y + r * _STAR_PTS[i][1]);
     ctx.closePath();
   } else {
     ctx.arc(x, y, r, 0, Math.PI * 2);
