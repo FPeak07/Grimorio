@@ -91,6 +91,33 @@ function toast(msg, duration = 2000) {
 // ===================== IMAGE CACHE =====================
 const _imgCache = new Map(); // nodeId → HTMLImageElement
 
+// ===================== COLOR CACHE =====================
+const _colorCache = new Map(); // hex string → {light30, dark40, dark50, rgb}
+
+function getColorVariants(color) {
+  if (_colorCache.has(color)) return _colorCache.get(color);
+  const rgb = parseHex(color);
+  const v = {
+    light30: lighten(color, 0.3),
+    dark40:  darken(color, 0.4),
+    dark50:  darken(color, 0.5),
+    rgb,
+  };
+  _colorCache.set(color, v);
+  return v;
+}
+
+// ===================== FONT CACHE =====================
+const _fontCache = new Map(); // key → font string
+
+function getFont(size, bold, family) {
+  const key = `${bold ? 'b' : ''}${size}${family}`;
+  if (_fontCache.has(key)) return _fontCache.get(key);
+  const f = `${bold ? 'bold ' : ''}${size}px '${family}', serif`;
+  _fontCache.set(key, f);
+  return f;
+}
+
 function _ensureImage(node) {
   if (!node.iconImage) { _imgCache.delete(node.id); return; }
   const src = node.iconImage.startsWith('data:') ? node.iconImage : `/images/${node.iconImage}`;
@@ -258,6 +285,7 @@ function drawNodes() {
     const isHover = hoveredId === n.id;
     const isSelected = selectedId === n.id;
     const color = n.color || '#f5c542';
+    const cv = getColorVariants(color);
 
     // Glow
     ctx.shadowColor = color;
@@ -265,9 +293,9 @@ function drawNodes() {
 
     // Relleno con gradiente radial
     const grad = ctx.createRadialGradient(p.x, p.y - r * 0.3, 0, p.x, p.y, r);
-    grad.addColorStop(0, lighten(color, 0.3));
+    grad.addColorStop(0, cv.light30);
     grad.addColorStop(0.6, color);
-    grad.addColorStop(1, darken(color, 0.4));
+    grad.addColorStop(1, cv.dark40);
     ctx.fillStyle = grad;
     drawShape(p.x, p.y, r, n.type);
     ctx.fill();
@@ -275,7 +303,7 @@ function drawNodes() {
     ctx.shadowBlur = 0;
 
     // Borde
-    ctx.strokeStyle = (isHover || isSelected) ? '#fff8e0' : (n.borderColor || darken(color, 0.5));
+    ctx.strokeStyle = (isHover || isSelected) ? '#fff8e0' : (n.borderColor || cv.dark50);
     ctx.lineWidth = (isHover || isSelected) ? Math.max(2.5, n.borderWidth || 1.5) : (n.borderWidth || 1.5);
     drawShape(p.x, p.y, r, n.type);
     ctx.stroke();
@@ -303,7 +331,7 @@ function drawNodes() {
         ctx.drawImage(img, p.x - sw / 2, p.y - sh / 2, sw, sh);
         const fade = (n.iconFade || 0) / 100;
         if (fade > 0) {
-          const [rc, gc, bc] = parseHex(color);
+          const [rc, gc, bc] = cv.rgb;
           if (fade >= 1) {
             ctx.fillStyle = color;
           } else {
@@ -322,7 +350,7 @@ function drawNodes() {
     } else if (n.title) {
       ctx.fillStyle = n.titleColor || '#000000';
       const titleFont = n.titleFont || 'Cormorant Garamond';
-      ctx.font = `${Math.floor(r * 0.32)}px '${titleFont}', serif`;
+      ctx.font = getFont(Math.floor(r * 0.32), false, titleFont);
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText(n.title, p.x, p.y + r * 0.05, Math.floor(r * 1.8));
@@ -345,7 +373,7 @@ function drawNodes() {
       ctx.fillStyle = (BACKGROUNDS[activeBg] || BACKGROUNDS.oscuro).subtitle;
       const iconFont = n.iconFont || 'Cinzel';
       const iconSize = n.iconSize || 13;
-      ctx.font = `${n.iconBold ? 'bold ' : ''}${Math.max(iconSize, Math.floor(iconSize * Math.min(view.scale, 1.2)))}px '${iconFont}', serif`;
+      ctx.font = getFont(Math.max(iconSize, Math.floor(iconSize * Math.min(view.scale, 1.2))), n.iconBold, iconFont);
       ctx.textAlign = 'center';
       ctx.textBaseline = 'top';
       ctx.shadowColor = 'rgba(0,0,0,0.9)';
