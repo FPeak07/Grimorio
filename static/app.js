@@ -76,6 +76,38 @@ function getNode(id) {
   return tree.nodes.find(n => n.id === id);
 }
 
+// ===================== ADJACENCY LIST =====================
+// nodeId → Set of connected nodeIds (bidirectional)
+const _adj = new Map();
+
+function buildAdjacency() {
+  _adj.clear();
+  for (const n of tree.nodes) _adj.set(n.id, new Set());
+  for (const c of tree.connections) {
+    if (!_adj.has(c.from)) _adj.set(c.from, new Set());
+    if (!_adj.has(c.to))   _adj.set(c.to,   new Set());
+    _adj.get(c.from).add(c.to);
+    _adj.get(c.to).add(c.from);
+  }
+}
+
+function adjAdd(fromId, toId) {
+  if (!_adj.has(fromId)) _adj.set(fromId, new Set());
+  if (!_adj.has(toId))   _adj.set(toId,   new Set());
+  _adj.get(fromId).add(toId);
+  _adj.get(toId).add(fromId);
+}
+
+function adjRemove(id) {
+  const neighbors = _adj.get(id);
+  if (neighbors) neighbors.forEach(nid => _adj.get(nid)?.delete(id));
+  _adj.delete(id);
+}
+
+function getNeighbors(id) {
+  return Array.from(_adj.get(id) || []).map(getNode).filter(Boolean);
+}
+
 function isLinkNode(n) {
   return n.kind === 'link' || (n.kind === undefined && !!n.url);
 }
@@ -636,13 +668,7 @@ document.getElementById('context-menu').addEventListener('click', (e) => {
 
 // ===================== ACCIONES =====================
 function addConnectedNode(parent, type) {
-  // Posiciona el nuevo nodo en una dirección alejada del padre,
-  // buscando un ángulo libre para no solapar con hijos existentes.
-  const children = tree.connections
-    .filter(c => c.from === parent.id || c.to === parent.id)
-    .map(c => getNode(c.from === parent.id ? c.to : c.from))
-    .filter(Boolean);
-
+  const children = getNeighbors(parent.id);
   const usedAngles = children.map(ch => Math.atan2(ch.y - parent.y, ch.x - parent.x));
   const angle = findFreeAngle(usedAngles);
   const distance = parent.size + 120;
@@ -662,6 +688,8 @@ function addConnectedNode(parent, type) {
 
   tree.nodes.push(newNode);
   tree.connections.push({ from: parent.id, to: newNode.id });
+  adjAdd(parent.id, newNode.id);
+  _adj.set(newNode.id, new Set([parent.id]));
   selectedId = newNode.id;
   scheduleSave();
   render();
@@ -669,11 +697,7 @@ function addConnectedNode(parent, type) {
 }
 
 function addLinkNode(parent) {
-  const children = tree.connections
-    .filter(c => c.from === parent.id || c.to === parent.id)
-    .map(c => getNode(c.from === parent.id ? c.to : c.from))
-    .filter(Boolean);
-
+  const children = getNeighbors(parent.id);
   const usedAngles = children.map(ch => Math.atan2(ch.y - parent.y, ch.x - parent.x));
   const angle = findFreeAngle(usedAngles);
   const distance = parent.size + 120;
@@ -693,6 +717,8 @@ function addLinkNode(parent) {
 
   tree.nodes.push(newNode);
   tree.connections.push({ from: parent.id, to: newNode.id });
+  adjAdd(parent.id, newNode.id);
+  _adj.set(newNode.id, new Set([parent.id]));
   selectedId = newNode.id;
   scheduleSave();
   render();
@@ -728,6 +754,7 @@ function createConnection(fromId, toId) {
     return;
   }
   tree.connections.push({ from: fromId, to: toId });
+  adjAdd(fromId, toId);
   scheduleSave();
   render();
 }
@@ -737,6 +764,7 @@ function deleteNode(id) {
   if (!confirm(`¿Eliminar "${getNode(id).title}" y sus conexiones?`)) return;
   tree.nodes = tree.nodes.filter(n => n.id !== id);
   tree.connections = tree.connections.filter(c => c.from !== id && c.to !== id);
+  adjRemove(id);
   if (selectedId === id) selectedId = null;
   scheduleSave();
   render();
@@ -1098,6 +1126,7 @@ async function loadFromServer() {
   try {
     const r = await fetch('/api/tree');
     tree = await r.json();
+    buildAdjacency();
     document.getElementById('tree-title').textContent = tree.title || 'Grimorio';
     if (tree.background && BACKGROUNDS[tree.background]) {
       activeBg = tree.background;
@@ -1195,6 +1224,7 @@ document.getElementById('import-file').addEventListener('change', async (e) => {
     if (!imported.nodes || !imported.connections) throw new Error('Formato inválido');
     if (!confirm('Esto reemplazará tu árbol actual. ¿Continuar?')) return;
     tree = imported;
+    buildAdjacency();
     await saveToServer();
     render();
     toast('Importado correctamente');
