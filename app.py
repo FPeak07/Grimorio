@@ -304,6 +304,29 @@ function drawShape(x, y, r, type) {
     ctx.lineTo(x + h*0.95, y + h*0.7);
     ctx.lineTo(x - h*0.95, y + h*0.7);
     ctx.closePath();
+  } else if (type === 'diamond') {
+    ctx.moveTo(x, y - r * 1.3);
+    ctx.lineTo(x + r, y);
+    ctx.lineTo(x, y + r * 1.3);
+    ctx.lineTo(x - r, y);
+    ctx.closePath();
+  } else if (type === 'hexagon') {
+    for (let i = 0; i < 6; i++) {
+      const a = (Math.PI / 3) * i - Math.PI / 6;
+      i === 0 ? ctx.moveTo(x + r * Math.cos(a), y + r * Math.sin(a))
+              : ctx.lineTo(x + r * Math.cos(a), y + r * Math.sin(a));
+    }
+    ctx.closePath();
+  } else if (type === 'star') {
+    for (let i = 0; i < 10; i++) {
+      const a = (Math.PI / 5) * i - Math.PI / 2;
+      const ri = i % 2 === 0 ? r : r * 0.42;
+      i === 0 ? ctx.moveTo(x + ri * Math.cos(a), y + ri * Math.sin(a))
+              : ctx.lineTo(x + ri * Math.cos(a), y + ri * Math.sin(a));
+    }
+    ctx.closePath();
+  } else {
+    ctx.arc(x, y, r, 0, Math.PI * 2);
   }
 }
 
