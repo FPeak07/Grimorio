@@ -386,9 +386,12 @@ function drawNodes() {
     const color = n.color || '#f5c542';
     const cv = getColorVariants(color);
 
-    // Glow
-    ctx.shadowColor = color;
-    ctx.shadowBlur = isHover || isSelected ? 25 : 12;
+    // Glow — skip shadow for sub-pixel nodes (invisible + expensive)
+    const useShadow = r >= 8;
+    if (useShadow) {
+      ctx.shadowColor = color;
+      ctx.shadowBlur = isHover || isSelected ? 25 : 12;
+    }
 
     // Relleno con gradiente radial
     const grad = ctx.createRadialGradient(p.x, p.y - r * 0.3, 0, p.x, p.y, r);
@@ -399,6 +402,7 @@ function drawNodes() {
     drawShape(p.x, p.y, r, n.type);
     ctx.fill();
 
+    // Reset shadow before stroke so stroke doesn't re-trigger shadow pass
     ctx.shadowBlur = 0;
 
     // Borde
