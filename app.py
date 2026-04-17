@@ -606,7 +606,8 @@ def _build_export_html(tree_json: str, css: str, title: str = 'Grimorio') -> str
 @app.route("/api/export-html")
 def export_html():
     from flask import Response
-    tree = load_tree()
+    import copy
+    tree = copy.deepcopy(load_tree())
 
     # Convierte imágenes de fichero a base64 para autocontención
     for node in tree.get('nodes', []):
