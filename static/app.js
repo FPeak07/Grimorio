@@ -210,7 +210,16 @@ function resizeCanvas() {
 window.addEventListener('resize', resizeCanvas);
 
 // ===================== RENDER =====================
+let _rafPending = false;
+
 function render() {
+  if (_rafPending) return;
+  _rafPending = true;
+  requestAnimationFrame(_renderFrame);
+}
+
+function _renderFrame() {
+  _rafPending = false;
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
   drawBackgroundGrid();
