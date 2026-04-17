@@ -21,6 +21,7 @@ let linkingFrom = null;                    // para modo conectar
 let lastMouse = { x: 0, y: 0 };            // en coordenadas de pantalla
 let saveTimer = null;
 let activeBg = 'oscuro';
+let isLoading = false;
 
 const BACKGROUNDS = {
   oscuro:    { fill: '#0d0b08', grid: 'rgba(245,197,66,0.04)',   subtitle: '#e8dfc9', swatch: '#1c1a16' },
@@ -176,6 +177,51 @@ function toast(msg, duration = 2000) {
   el.classList.remove('hidden');
   clearTimeout(el._t);
   el._t = setTimeout(() => el.classList.add('hidden'), duration);
+}
+
+// ===================== LOADING OVERLAY =====================
+const _loadingOverlay = document.getElementById('loading-overlay');
+const _loadingBar     = document.getElementById('loading-bar');
+const _loadingText    = document.getElementById('loading-text');
+
+function showLoader(total) {
+  isLoading = true;
+  _loadingBar.style.width = '0%';
+  _loadingText.textContent = `Cargando imágenes… 0 / ${total}`;
+  _loadingOverlay.classList.remove('hidden', 'fade-out');
+}
+
+function updateLoader(loaded, total) {
+  _loadingBar.style.width = `${Math.round((loaded / total) * 100)}%`;
+  _loadingText.textContent = `Cargando imágenes… ${loaded} / ${total}`;
+}
+
+function hideLoader() {
+  isLoading = false;
+  _loadingOverlay.classList.add('fade-out');
+  setTimeout(() => _loadingOverlay.classList.add('hidden'), 520);
+}
+
+async function preloadAllImages(nodes) {
+  const toLoad = nodes.filter(n => n.iconImage);
+  if (toLoad.length === 0) return;
+
+  showLoader(toLoad.length);
+  let loaded = 0;
+
+  await Promise.all(toLoad.map(node => new Promise(resolve => {
+    const src = node.iconImage.startsWith('data:')
+      ? node.iconImage
+      : `/images/${node.iconImage}`;
+    const img = new Image();
+    img._src = src;
+    img.onload = img.onerror = () => {
+      _imgCache.set(node.id, img);
+      updateLoader(++loaded, toLoad.length);
+      resolve();
+    };
+    img.src = src;
+  })));
 }
 
 // ===================== IMAGE CACHE =====================
@@ -561,6 +607,7 @@ function parseHex(hex) {
 
 // ===================== INTERACCIÓN =====================
 canvas.addEventListener('mousedown', (e) => {
+  if (isLoading) return;
   if (e.button === 2) return; // click derecho se maneja en contextmenu
   const node = findNodeAt(e.clientX, e.clientY);
 
@@ -586,6 +633,7 @@ canvas.addEventListener('mousedown', (e) => {
 });
 
 canvas.addEventListener('mousemove', (e) => {
+  if (isLoading) return;
   lastMouse.x = e.clientX;
   lastMouse.y = e.clientY;
 
@@ -642,11 +690,13 @@ canvas.addEventListener('mouseup', (e) => {
 });
 
 canvas.addEventListener('dblclick', (e) => {
+  if (isLoading) return;
   const node = findNodeAt(e.clientX, e.clientY);
   if (node) openEditPanel(node.id);
 });
 
 canvas.addEventListener('wheel', (e) => {
+  if (isLoading) return;
   e.preventDefault();
   const factor = e.deltaY < 0 ? 1.1 : 0.9;
   const newScale = Math.min(3, Math.max(0.2, view.scale * factor));
@@ -663,6 +713,7 @@ canvas.addEventListener('wheel', (e) => {
 }, { passive: false });
 
 canvas.addEventListener('contextmenu', (e) => {
+  if (isLoading) return;
   e.preventDefault();
   const node = findNodeAt(e.clientX, e.clientY);
   if (node) {
@@ -1207,9 +1258,13 @@ async function loadFromServer() {
     if (tree.background && BACKGROUNDS[tree.background]) {
       activeBg = tree.background;
     }
+    await preloadAllImages(tree.nodes || []);
+    hideLoader();
     render();
   } catch (e) {
     console.error('Error cargando:', e);
+    isLoading = false;
+    _loadingOverlay.classList.add('hidden');
     toast('Error al cargar el árbol');
   }
 }
@@ -1302,6 +1357,8 @@ document.getElementById('import-file').addEventListener('change', async (e) => {
     tree = imported;
     buildAdjacency();
     buildSpatialHash();
+    await preloadAllImages(tree.nodes || []);
+    hideLoader();
     await saveToServer();
     render();
     toast('Importado correctamente');

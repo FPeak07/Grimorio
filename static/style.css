@@ -979,3 +979,60 @@ body {
   border-color: var(--gold);
   box-shadow: 0 0 10px rgba(245,197,66,0.45);
 }
+
+/* ============ LOADING OVERLAY ============ */
+.loading-overlay {
+  position: fixed;
+  inset: 0;
+  background: var(--bg-0);
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 1;
+  transition: opacity 0.5s ease;
+}
+
+.loading-overlay.fade-out {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.loading-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.6rem;
+}
+
+.loading-brand {
+  font-family: var(--font-display);
+  font-size: 2rem;
+  color: var(--gold);
+  letter-spacing: 0.25em;
+  text-shadow: 0 0 24px rgba(245,197,66,0.4);
+}
+
+.loading-bar-track {
+  width: 260px;
+  height: 2px;
+  background: rgba(245,197,66,0.12);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.loading-bar {
+  height: 100%;
+  width: 0%;
+  background: var(--gold);
+  border-radius: 2px;
+  transition: width 0.18s ease;
+  box-shadow: 0 0 10px rgba(245,197,66,0.6);
+}
+
+.loading-text {
+  font-family: var(--font-serif);
+  font-size: 0.88rem;
+  color: var(--ink-dim);
+  letter-spacing: 0.06em;
+}
