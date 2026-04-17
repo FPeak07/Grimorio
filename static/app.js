@@ -60,14 +60,72 @@ function screenToWorld(sx, sy) {
   };
 }
 
+// ===================== SPATIAL HASH =====================
+const SPATIAL_CELL = 200; // world units per cell
+const _spatial   = new Map(); // cellKey → Set<nodeId>
+const _nodeCells = new Map(); // nodeId  → Set<cellKey>
+
+function _cellKey(cx, cy) { return `${cx},${cy}`; }
+
+function _cellsForNode(node) {
+  const r = node.size;
+  const x0 = Math.floor((node.x - r) / SPATIAL_CELL);
+  const x1 = Math.floor((node.x + r) / SPATIAL_CELL);
+  const y0 = Math.floor((node.y - r) / SPATIAL_CELL);
+  const y1 = Math.floor((node.y + r) / SPATIAL_CELL);
+  const keys = [];
+  for (let cx = x0; cx <= x1; cx++)
+    for (let cy = y0; cy <= y1; cy++)
+      keys.push(_cellKey(cx, cy));
+  return keys;
+}
+
+function spatialAdd(node) {
+  const keys = _cellsForNode(node);
+  _nodeCells.set(node.id, new Set(keys));
+  for (const k of keys) {
+    if (!_spatial.has(k)) _spatial.set(k, new Set());
+    _spatial.get(k).add(node.id);
+  }
+}
+
+function spatialRemove(id) {
+  const keys = _nodeCells.get(id);
+  if (!keys) return;
+  for (const k of keys) _spatial.get(k)?.delete(id);
+  _nodeCells.delete(id);
+}
+
+function spatialUpdate(node) {
+  spatialRemove(node.id);
+  spatialAdd(node);
+}
+
+function buildSpatialHash() {
+  _spatial.clear();
+  _nodeCells.clear();
+  for (const node of tree.nodes) spatialAdd(node);
+}
+
 function findNodeAt(sx, sy) {
-  // Recorre en orden inverso (los últimos están "encima")
+  const { x: wx, y: wy } = screenToWorld(sx, sy);
+  const cx = Math.floor(wx / SPATIAL_CELL);
+  const cy = Math.floor(wy / SPATIAL_CELL);
+
+  // Collect candidates from 3×3 cell neighborhood
+  const candidates = new Set();
+  for (let dx = -1; dx <= 1; dx++)
+    for (let dy = -1; dy <= 1; dy++)
+      _spatial.get(_cellKey(cx + dx, cy + dy))?.forEach(id => candidates.add(id));
+
+  // Return topmost hit (highest tree.nodes index = rendered last = on top)
   for (let i = tree.nodes.length - 1; i >= 0; i--) {
     const n = tree.nodes[i];
+    if (!candidates.has(n.id)) continue;
     const p = worldToScreen(n.x, n.y);
     const r = n.size * view.scale;
-    const dx = sx - p.x, dy = sy - p.y;
-    if (Math.sqrt(dx * dx + dy * dy) <= r) return n;
+    const ddx = sx - p.x, ddy = sy - p.y;
+    if (ddx * ddx + ddy * ddy <= r * r) return n;
   }
   return null;
 }
@@ -537,6 +595,7 @@ canvas.addEventListener('mousemove', (e) => {
         const dy = e.movementY / view.scale;
         node.x += dx;
         node.y += dy;
+        spatialUpdate(node);
         draggingNode.moved = true;
         scheduleSave();
         render();
@@ -699,6 +758,7 @@ function addConnectedNode(parent, type) {
   tree.connections.push({ from: parent.id, to: newNode.id });
   adjAdd(parent.id, newNode.id);
   _adj.set(newNode.id, new Set([parent.id]));
+  spatialAdd(newNode);
   selectedId = newNode.id;
   scheduleSave();
   render();
@@ -728,6 +788,7 @@ function addLinkNode(parent) {
   tree.connections.push({ from: parent.id, to: newNode.id });
   adjAdd(parent.id, newNode.id);
   _adj.set(newNode.id, new Set([parent.id]));
+  spatialAdd(newNode);
   selectedId = newNode.id;
   scheduleSave();
   render();
@@ -774,6 +835,7 @@ function deleteNode(id) {
   tree.nodes = tree.nodes.filter(n => n.id !== id);
   tree.connections = tree.connections.filter(c => c.from !== id && c.to !== id);
   adjRemove(id);
+  spatialRemove(id);
   if (selectedId === id) selectedId = null;
   scheduleSave();
   render();
@@ -1136,6 +1198,7 @@ async function loadFromServer() {
     const r = await fetch('/api/tree');
     tree = await r.json();
     buildAdjacency();
+    buildSpatialHash();
     document.getElementById('tree-title').textContent = tree.title || 'Grimorio';
     if (tree.background && BACKGROUNDS[tree.background]) {
       activeBg = tree.background;
@@ -1234,6 +1297,7 @@ document.getElementById('import-file').addEventListener('change', async (e) => {
     if (!confirm('Esto reemplazará tu árbol actual. ¿Continuar?')) return;
     tree = imported;
     buildAdjacency();
+    buildSpatialHash();
     await saveToServer();
     render();
     toast('Importado correctamente');
